@@ -1,0 +1,4 @@
+How to execute?
+LD_LIBRARY_PATH=. ./portd_rest -i xxx.xxx.xxx.xxx -p xxx -n xxx
+or you can add LD_LIBRARY_PATH forever
+export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:.

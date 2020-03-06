@@ -1,0 +1,2 @@
+export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:../bin
+./portd_rest -i 10.144.10.148 -p 888 -n s2e_opm
