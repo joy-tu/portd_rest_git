@@ -28,13 +28,37 @@
 static int json_object_member_get_type(const JSON_Object *object, const char *name);
 
 unsigned int string_hash(void *string);
-JSON_Value* json_filter_from_json(JSON_Value *ori_json, char *query);
+int do_err_rest_rsp(int ret);
+int json_filter_from_json(JSON_Value *ori_json, char *query, int idx);
 JSON_Value* json_filter_from_file(const char *file, char *query);
 
 static int json_object_member_get_type(const JSON_Object *object, const char *name)
 {
 	JSON_Value *val = json_object_get_value(object, name);
 	return json_value_get_type(val);
+}
+
+int do_err_rest_rsp(int ret)
+{
+	char *serialized_string = NULL;
+
+	switch (ret) {
+	case REST_HTTP_STATUS_NOT_FOUND:
+		serialized_string = json_serialize_to_string_pretty(
+							json_parse_string("{\"error\":{\"message\":\"Fail to get data in config\"}}")
+						);
+		break;
+	case REST_HTTP_STATUS_BAD_REQUEST:
+		serialized_string = json_serialize_to_string_pretty(
+							json_parse_string("{\"error\":{\"message\":\"Member not exists\"}}")
+						);	
+		break;
+	default:
+		break;
+	}
+	rest_write(serialized_string, strlen(serialized_string));		
+
+	return 0;
 }
 
 unsigned int string_hash(void *string)
@@ -54,7 +78,7 @@ unsigned int string_hash(void *string)
 	return result;
 }
 
-JSON_Value* json_filter_from_json(JSON_Value *ori_json, char *query)
+int json_filter_from_json(JSON_Value *ori_json, char *query, int idx)
 {
 	JSON_Value *dst_val, *ori_val;
 	JSON_Array *dst_array, *ori_array;
@@ -62,6 +86,7 @@ JSON_Value* json_filter_from_json(JSON_Value *ori_json, char *query)
 	JSON_Object *obj;
 	int i, j, cnt, type, filter_cnt, append = 1;
 	struct yuarel_param params[5];	
+	char *serialized_string = NULL;
 
 	filter_cnt = yuarel_parse_query(query, '&', params, 5); 
 	/* Parse the filter attribute, max attribute is five */
@@ -71,10 +96,17 @@ JSON_Value* json_filter_from_json(JSON_Value *ori_json, char *query)
 	cnt = json_array_get_count(ori_array);
 	dst_val = json_value_init_array();
 	dst_array = json_value_get_array(dst_val);
+	printf("Joy idx=%d\r\n", idx);
 	for (i = 0; i < cnt; i++) { /* Check all object inside array */
+		printf("i = %d\r\n", i);
+		if (idx != 0 && idx != (i + 1)) {
+			continue;
+		}
 		append = 1;
 		obj = json_array_get_object(ori_array, i);
 		for (j = 0; j < filter_cnt; j++) { /* Check all filter attribute for the specific object */
+			if (!json_object_has_value(obj, params[j].key))
+				return REST_HTTP_STATUS_NOT_FOUND;
 			if (append == 0)
 				break;
 			type = json_object_member_get_type(obj, params[j].key);
@@ -100,6 +132,7 @@ JSON_Value* json_filter_from_json(JSON_Value *ori_json, char *query)
 			case JSONBoolean:
 				break;
 			default:
+				append = 0;
 				break;
 			}		
 		}		
@@ -109,8 +142,12 @@ JSON_Value* json_filter_from_json(JSON_Value *ori_json, char *query)
 			json_array_append_value(dst_array, dup_val);
 		}
 	}
-	
-	return dst_val;
+	/* Create the json format and send REST response back */
+	serialized_string = json_serialize_to_string_pretty(dst_val);
+	rest_write(serialized_string, strlen(serialized_string));
+	json_free_serialized_string(serialized_string);
+	json_value_free(dst_val);
+	return REST_HTTP_STATUS_OK;
 }
 
 JSON_Value* json_filter_from_file(const char *file, char *query)
@@ -172,12 +209,15 @@ JSON_Value* json_filter_from_file(const char *file, char *query)
 
 static REST_HTTP_STATUS s2e_rest_get(const char *uri, char *input_data, int32_t input_data_size)
 {
-	int p, number, i;
+	int p, number, idx, ret;
 	char *serialized_string = NULL;
 	nng_url *         url = NULL;
 	JSON_Value *user_data, *dst_data;
+	void *dst_data2;
 	char              rest_addr[128];
-	char*			fakeurl = "http://localhost:404";
+	char*		fakeurl = "http://localhost:404";
+	char 			cmp_uri[128], tmp_path[128];
+
 	struct yuarel yurl;
 	char *parts[5];
 	struct yuarel_param params[5];	
@@ -191,27 +231,48 @@ static REST_HTTP_STATUS s2e_rest_get(const char *uri, char *input_data, int32_t 
 		printf("Could not parse url!\n");
 		return 1;
 	}
+	strcpy(tmp_path, yurl.path);
+	number = yuarel_split_path(tmp_path, parts, 5);
+	printf("number = %d\r\n", number);
 
 	printf("Struct values:\n");
 	printf("\tscheme:\t\t%s\n", yurl.scheme);
 	printf("\thost:\t\t%s\n", yurl.host);
 	printf("\tport:\t\t%d\n", yurl.port);
-	printf("\tpath1:\t\t%s\n", yurl.path);
+	printf("\tpath:\t\t%s\n", yurl.path);
 	printf("\tquery:\t\t%s\n", yurl.query);
 	printf("\tfragment:\t%s\n", yurl.fragment);
-#if 1
-	if (string_hash(yurl.path) == string_hash("s2e_opm/config")) {
+	if ((number == 2) && (string_hash(yurl.path) == string_hash("s2e_opm/config"))) {
 		user_data = json_parse_file("s2e_opm.json");
-		dst_data = json_filter_from_json(user_data, yurl.query);
-		serialized_string = json_serialize_to_string_pretty(dst_data);
-		puts(serialized_string);
-		rest_write(serialized_string, strlen(serialized_string));
+		ret = json_filter_from_json(user_data, yurl.query, 0);
 
-		json_free_serialized_string(serialized_string);
 		json_value_free(user_data);
-		json_value_free(dst_data);
+	} else if (number == 3) {
+		idx = atoi(parts[number - 1]);
+		sprintf(cmp_uri, "s2e_opm/config/%d", idx);
+		if (idx > 0 && idx < 3) {
+			if (string_hash(yurl.path) == string_hash(cmp_uri)) {
+				user_data = json_parse_file("s2e_opm.json");
+				ret = json_filter_from_json(user_data, yurl.query, idx);
+				json_value_free(user_data);
+#if 0
+				dst_data = json_filter_from_json(user_data, yurl.query, idx);
+				serialized_string = json_serialize_to_string_pretty(dst_data);
+				puts(serialized_string);
+				rest_write(serialized_string, strlen(serialized_string));
+
+				json_free_serialized_string(serialized_string);
+				json_value_free(user_data);
+				json_value_free(dst_data);
+#endif				
+			}
+		} else {
+			return REST_HTTP_STATUS_NOT_FOUND;
+		}
+	} else {
+		ret = REST_HTTP_STATUS_BAD_REQUEST;
 	}
-#else
+#if 0
 	switch (number) {
 		case 2: //s2e_mode/xxx
 			if (string_hash(parts[number - 1]) == string_hash("config")) {
@@ -231,6 +292,10 @@ static REST_HTTP_STATUS s2e_rest_get(const char *uri, char *input_data, int32_t 
 			break;
 	}
 #endif
+	if (ret != REST_HTTP_STATUS_OK) {
+		do_err_rest_rsp(ret);
+		return ret;
+	}
 	return REST_HTTP_STATUS_OK;				
 
 }
