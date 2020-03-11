@@ -24,12 +24,13 @@
 
 #define MAX_BUF_SIZE 4096
 #define DEFAULT_URL "http://%s/%s"
+//#define DBG1
 
 static int json_object_member_get_type(const JSON_Object *object, const char *name);
 
 unsigned int string_hash(void *string);
 int do_err_rest_rsp(int ret);
-int json_filter_from_json(JSON_Value *ori_json, char *query, int idx);
+int json_filter_from_json(JSON_Value **dst_json, JSON_Value *ori_json, char *query, int idx);
 JSON_Value* json_filter_from_file(const char *file, char *query);
 
 static int json_object_member_get_type(const JSON_Object *object, const char *name)
@@ -78,7 +79,7 @@ unsigned int string_hash(void *string)
 	return result;
 }
 
-int json_filter_from_json(JSON_Value *ori_json, char *query, int idx)
+int json_filter_from_json(JSON_Value **dst_json, JSON_Value *ori_json, char *query, int idx)
 {
 	JSON_Value *dst_val, *ori_val;
 	JSON_Array *dst_array, *ori_array;
@@ -104,9 +105,13 @@ int json_filter_from_json(JSON_Value *ori_json, char *query, int idx)
 		}
 		append = 1;
 		obj = json_array_get_object(ori_array, i);
+		printf("Line=%d\r\n", __LINE__);
 		for (j = 0; j < filter_cnt; j++) { /* Check all filter attribute for the specific object */
-			if (!json_object_has_value(obj, params[j].key))
+			if (!json_object_has_value(obj, params[j].key)) {
+				printf("Line=%d\r\n", __LINE__);
 				return REST_HTTP_STATUS_NOT_FOUND;
+			}
+			printf("Line=%d\r\n", __LINE__);
 			if (append == 0)
 				break;
 			type = json_object_member_get_type(obj, params[j].key);
@@ -143,10 +148,12 @@ int json_filter_from_json(JSON_Value *ori_json, char *query, int idx)
 		}
 	}
 	/* Create the json format and send REST response back */
-	serialized_string = json_serialize_to_string_pretty(dst_val);
+	/* serialized_string = json_serialize_to_string_pretty(dst_val);
 	rest_write(serialized_string, strlen(serialized_string));
 	json_free_serialized_string(serialized_string);
 	json_value_free(dst_val);
+	*/
+	*dst_json = dst_val;
 	return REST_HTTP_STATUS_OK;
 }
 
@@ -212,7 +219,7 @@ static REST_HTTP_STATUS s2e_rest_get(const char *uri, char *input_data, int32_t 
 	int p, number, idx, ret;
 	char *serialized_string = NULL;
 	nng_url *         url = NULL;
-	JSON_Value *user_data, *dst_data;
+	JSON_Value *user_data, *dst_data, *dst_json;
 	void *dst_data2;
 	char              rest_addr[128];
 	char*		fakeurl = "http://localhost:404";
@@ -244,8 +251,17 @@ static REST_HTTP_STATUS s2e_rest_get(const char *uri, char *input_data, int32_t 
 	printf("\tfragment:\t%s\n", yurl.fragment);
 	if ((number == 2) && (string_hash(yurl.path) == string_hash("s2e_opm/config"))) {
 		user_data = json_parse_file("s2e_opm.json");
-		ret = json_filter_from_json(user_data, yurl.query, 0);
-
+		ret = json_filter_from_json(&dst_json, user_data, yurl.query, 0);
+		if (ret == REST_HTTP_STATUS_OK) {
+			serialized_string = json_serialize_to_string(dst_json);
+			rest_write(serialized_string, strlen(serialized_string));
+#ifdef DBG1
+			serialized_string = json_serialize_to_string_pretty(dst_json);
+			puts(serialized_string);
+#endif
+			json_free_serialized_string(serialized_string);
+			json_value_free(dst_json);
+		}
 		json_value_free(user_data);
 	} else if (number == 3) {
 		idx = atoi(parts[number - 1]);
@@ -253,18 +269,18 @@ static REST_HTTP_STATUS s2e_rest_get(const char *uri, char *input_data, int32_t 
 		if (idx > 0 && idx < 3) {
 			if (string_hash(yurl.path) == string_hash(cmp_uri)) {
 				user_data = json_parse_file("s2e_opm.json");
-				ret = json_filter_from_json(user_data, yurl.query, idx);
+				ret = json_filter_from_json(&dst_json, user_data, yurl.query, idx);
+				if (ret == REST_HTTP_STATUS_OK) {
+					serialized_string = json_serialize_to_string(dst_json);
+					rest_write(serialized_string, strlen(serialized_string));
+#ifdef DBG1
+					serialized_string = json_serialize_to_string_pretty(dst_json);
+					puts(serialized_string);
+#endif
+					json_free_serialized_string(serialized_string);
+					json_value_free(dst_json);
+				}
 				json_value_free(user_data);
-#if 0
-				dst_data = json_filter_from_json(user_data, yurl.query, idx);
-				serialized_string = json_serialize_to_string_pretty(dst_data);
-				puts(serialized_string);
-				rest_write(serialized_string, strlen(serialized_string));
-
-				json_free_serialized_string(serialized_string);
-				json_value_free(user_data);
-				json_value_free(dst_data);
-#endif				
 			}
 		} else {
 			return REST_HTTP_STATUS_NOT_FOUND;
@@ -303,6 +319,7 @@ static REST_HTTP_STATUS s2e_rest_get(const char *uri, char *input_data, int32_t 
 static REST_HTTP_STATUS s2e_rest_patch(const char *uri, char *input_data, int32_t input_data_size)
 {
 	printf("uri=%s, input_data=%s, size=%d\r\n", uri, input_data, input_data_size);
+
 	return REST_HTTP_STATUS_OK;
 }
 
