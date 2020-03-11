@@ -300,92 +300,96 @@ static REST_HTTP_STATUS s2e_rest_get(const char *uri, char *input_data, int32_t 
 
 }
 
+static REST_HTTP_STATUS s2e_rest_patch(const char *uri, char *input_data, int32_t input_data_size)
+{
+	printf("uri=%s, input_data=%s, size=%d\r\n", uri, input_data, input_data_size);
+	return REST_HTTP_STATUS_OK;
+}
+
 static void usage(char *str)
 {
-    fprintf(stderr, "Usage: %s [-ipns]\n", str);
-    fprintf(stderr, "[-i IP]:          ip address\n");
-    fprintf(stderr, "[-p port]:        port number\n");
-    fprintf(stderr, "[-n module name]: module name\n");
+	fprintf(stderr, "Usage: %s [-ipns]\n", str);
+	fprintf(stderr, "[-i IP]:          ip address\n");
+	fprintf(stderr, "[-p port]:        port number\n");
+	fprintf(stderr, "[-n module name]: module name\n");
 	fprintf(stderr, "[-s size]:        maximum http body size\n");
 }
 
 int main(int argc, char **argv)
 {
 	int opt;
-    int32_t ret, id;
-    char *ip = NULL, *module_name = NULL;
-    int port = -1, size = MAX_BUF_SIZE;
-    char url[1024];
+	int32_t ret, id;
+	char *ip = NULL, *module_name = NULL;
+	int port = -1, size = MAX_BUF_SIZE;
+	char url[1024];
 
-	while ((opt = getopt(argc, argv, "i:p:n:s:")) != -1)
-    {
-        switch (opt)
-        {
-            case 'n':
-                module_name = optarg;
-                break;
+	while ((opt = getopt(argc, argv, "i:p:n:s:")) != -1) {
+		switch (opt) {
+		case 'n':
+			module_name = optarg;
+			break;
 
-            case 'i':
-                ip = optarg;
-                break;
+		case 'i':
+			ip = optarg;
+			break;
 
-            case 'p':
-                port = atoi(optarg);
-                break;
-				
-			case 's':
-                size = atoi(optarg);
-                break;
-				
-            case '?':
-            default:
+		case 'p':
+			port = atoi(optarg);
+			break;
 
-                usage(argv[0]);
-                exit(EXIT_FAILURE);
+		case 's':
+			size = atoi(optarg);
+			break;
 
-                break;
-        }
-    }
+		case '?':
+		default:
+			usage(argv[0]);
+			exit(EXIT_FAILURE);
+			break;
+			
+		}
+	}
 
-	if (ip == NULL || port == -1 || module_name == NULL)
-    {
-        usage(argv[0]);
-        return -1;
-    }
+	if (ip == NULL || port == -1 || module_name == NULL) {
+		usage(argv[0]);
+		return -1;
+	}
 
-    printf("\n");
-    printf("ip      '%s'\n", ip);
-    printf("port    '%d'\n", port);
-    printf("module  '%s'\n", module_name);
-    printf("size    '%d'\n", size);
+	printf("\n");
+	printf("ip      '%s'\n", ip);
+	printf("port    '%d'\n", port);
+	printf("module  '%s'\n", module_name);
+	printf("size    '%d'\n", size);
 
-    sprintf(url, DEFAULT_URL, ip, module_name);
+	sprintf(url, DEFAULT_URL, ip, module_name);
 
-    /* initial the REST handler */
-    if ((id = rest_init(module_name)) < 0)
-    {
-        printf("(%s:%d)init rest fail (%d).\n", __func__, __LINE__, id);
-        return -1;
-    }
+	/* initial the REST handler */
+	if ((id = rest_init(module_name)) < 0) {
+		printf("(%s:%d)init rest fail (%d).\n", __func__, __LINE__, id);
+		return -1;
+	}
 
-    /* Register your REST call back */
-    if ((ret = rest_cb_register(id, "/config", REST_OP_GET, s2e_rest_get)) < 0)
-    {
-        printf("(%s:%d)register rest callback fail (%d).\n", __func__, __LINE__, ret);
-        return -1;
-    }
+	/* Register your REST call back */
+	if ((ret = rest_cb_register(id, "/config", REST_OP_GET, s2e_rest_get)) < 0) {
+		printf("(%s:%d)register rest callback fail (%d).\n", __func__, __LINE__, ret);
+		return -1;
+	}
 
-	// Start web server
-    if ((ret = http_server_start(port, url, size)) != HTTP_SERVER_OK)
-        printf("(%s:%d)HTTP server start fail (%d).\n", __func__, __LINE__, ret);
+	if ((ret = rest_cb_register(id, "/config", REST_OP_PATCH, s2e_rest_patch)) < 0) {
+		printf("(%s:%d)register rest callback fail (%d).\n", __func__, __LINE__, ret);
+		return -1;
+	}
+	
+	/* Start web server */
+	if ((ret = http_server_start(port, url, size)) != HTTP_SERVER_OK)
+		printf("(%s:%d)HTTP server start fail (%d).\n", __func__, __LINE__, ret);
 
+	while (1)
+		sleep(1);
 
-    while (1)
-        sleep(1);
+	/* stop server & unregister rest callback function */
+	http_server_stop();
+	rest_cb_unregister(id);
 
-    // stop server & unregister rest callback function
-    http_server_stop();
-    rest_cb_unregister(id);
-
-    return 0;
+	return 0;
 }
