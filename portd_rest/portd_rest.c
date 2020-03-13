@@ -27,6 +27,8 @@
 //#define DBG1
 
 static int json_object_member_get_type(const JSON_Object *object, const char *name);
+static REST_HTTP_STATUS s2e_rest_get(const char *uri, char *input_data, int32_t input_data_size);
+static REST_HTTP_STATUS s2e_rest_patch(const char *uri, char *input_data, int32_t input_data_size);
 
 unsigned int string_hash(void *string);
 int do_err_rest_rsp(int ret);
@@ -65,7 +67,6 @@ int do_err_rest_rsp(int ret)
 unsigned int string_hash(void *string)
 {
 	/* This is the djb2 string hash function */
-
 	unsigned int result = 5381;
 	unsigned char *p;
 
@@ -224,13 +225,10 @@ static REST_HTTP_STATUS s2e_rest_get(const char *uri, char *input_data, int32_t 
 	char              rest_addr[128];
 	char*		fakeurl = "http://localhost:404";
 	char 			cmp_uri[128], tmp_path[128];
-
-	struct yuarel yurl;
 	char *parts[5];
+	struct yuarel yurl;
 	struct yuarel_param params[5];	
 	
-	printf("uri=%s, input_data=%s, size=%d\r\n", uri, input_data, input_data_size);
-
 	sprintf(rest_addr, "%s%s", fakeurl, uri);
 	printf("%s\r\n", rest_addr);
 
@@ -240,8 +238,7 @@ static REST_HTTP_STATUS s2e_rest_get(const char *uri, char *input_data, int32_t 
 	}
 	strcpy(tmp_path, yurl.path);
 	number = yuarel_split_path(tmp_path, parts, 5);
-	printf("number = %d\r\n", number);
-
+#if DBG1
 	printf("Struct values:\n");
 	printf("\tscheme:\t\t%s\n", yurl.scheme);
 	printf("\thost:\t\t%s\n", yurl.host);
@@ -249,6 +246,7 @@ static REST_HTTP_STATUS s2e_rest_get(const char *uri, char *input_data, int32_t 
 	printf("\tpath:\t\t%s\n", yurl.path);
 	printf("\tquery:\t\t%s\n", yurl.query);
 	printf("\tfragment:\t%s\n", yurl.fragment);
+#endif	
 	if ((number == 2) && (string_hash(yurl.path) == string_hash("s2e_opm/config"))) {
 		user_data = json_parse_file("s2e_opm.json");
 		ret = json_filter_from_json(&dst_json, user_data, yurl.query, 0);
@@ -288,26 +286,7 @@ static REST_HTTP_STATUS s2e_rest_get(const char *uri, char *input_data, int32_t 
 	} else {
 		ret = REST_HTTP_STATUS_BAD_REQUEST;
 	}
-#if 0
-	switch (number) {
-		case 2: //s2e_mode/xxx
-			if (string_hash(parts[number - 1]) == string_hash("config")) {
-				user_data = json_parse_file("wtrial.json");
 
-				serialized_string = json_serialize_to_string_pretty(user_data);
-					puts(serialized_string);
-				rest_write(serialized_string, strlen(serialized_string));
-
-				json_free_serialized_string(serialized_string);
-				json_value_free(user_data);				
-			}
-			break;
-		case 3:
-			break;
-		default:
-			break;
-	}
-#endif
 	if (ret != REST_HTTP_STATUS_OK) {
 		do_err_rest_rsp(ret);
 		return ret;
@@ -318,8 +297,79 @@ static REST_HTTP_STATUS s2e_rest_get(const char *uri, char *input_data, int32_t 
 
 static REST_HTTP_STATUS s2e_rest_patch(const char *uri, char *input_data, int32_t input_data_size)
 {
-	printf("uri=%s, input_data=%s, size=%d\r\n", uri, input_data, input_data_size);
+	char *tmp_str = NULL, *usr_obj_name;
+	JSON_Value *usr_data, *ori_val, *rsp_val;
+	JSON_Array *ori_array;
+	JSON_Value_Type type;
+	JSON_Object *obj;
+	int array_cnt, i, j, obj_cnt;
+	printf("s2e_rest_patch-uri=%s, input_data=%s, size=%d\r\n", uri, input_data, input_data_size);
 
+	/* Get configuration json-obj */
+	ori_val = json_parse_file("s2e_opm.json");
+	ori_array = json_value_get_array(ori_val);
+	array_cnt = json_array_get_count(ori_array);	
+#if 1
+	tmp_str = json_serialize_to_string_pretty(ori_val);
+	printf("s2e_rest_patch1-%s, %d-%s\r\n", __func__, __LINE__, tmp_str);
+#endif
+	usr_data = json_parse_string(input_data);
+	if (usr_data == NULL) {
+		printf("Error %s-%d\r\n", __func__, __LINE__);
+		return REST_HTTP_STATUS_BAD_REQUEST;
+	}
+#if 1	
+	tmp_str = json_serialize_to_string_pretty(usr_data);
+	printf("s2e_rest_patch2-%s, %d-%s\r\n", __func__, __LINE__, tmp_str);
+#endif
+	type = json_value_get_type(usr_data);
+	if (type == JSONObject) {
+		obj_cnt = json_object_get_count(json_object(usr_data));
+#if 1
+		printf("%s-%d, type = %x, obj_cnt = %d\r\n", __func__, __LINE__, type, obj_cnt);
+#endif
+	} else {
+		printf("Error %s-%d\r\n", __func__, __LINE__);
+		return REST_HTTP_STATUS_BAD_REQUEST;
+	}
+
+	for (i = 0; i < array_cnt; i++) {
+		obj = json_array_get_object(ori_array, i);
+		for (j = 0; j < obj_cnt; j++) {
+			usr_obj_name = json_object_get_name(json_object(usr_data), j);
+			type = json_object_member_get_type(obj, usr_obj_name);
+			switch (type) {
+			case JSONString:
+				json_object_set_string(obj, 
+					usr_obj_name, 
+					json_object_get_string(json_object(usr_data), usr_obj_name));
+
+				break;
+			case JSONNumber:
+				json_object_set_number(obj, 
+					usr_obj_name, 
+					json_object_get_number(json_object(usr_data), usr_obj_name));
+				
+				break;
+			case JSONObject:
+				break;
+			case JSONArray:
+				break;
+			case JSONBoolean:
+				break;
+			default:
+				break;
+			}		
+		
+		}		
+	}
+	json_serialize_to_file_pretty(ori_val, "s2e_opm.json");
+#if 1
+	rsp_val = json_object_get_wrapping_value(obj);
+	tmp_str = json_serialize_to_string_pretty(rsp_val);
+	printf("s2e_rest_patch3-%s, %d-%s\r\n", __func__, __LINE__, tmp_str);
+	rest_write(tmp_str, strlen(tmp_str));
+#endif
 	return REST_HTTP_STATUS_OK;
 }
 
