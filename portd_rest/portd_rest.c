@@ -26,6 +26,8 @@
 #define MAX_PATH_SPLIT 5
 #define MAX_UART_PORT 2
 #define DEFAULT_URL "http://%s/%s"
+#define DEFAULT_CFG "s2e_opm.json.default"
+#define MODULE_CFG "s2e_opm.json"
 //#define DBG1
 
 static int json_object_member_get_type(const JSON_Object *object, const char *name);
@@ -87,6 +89,7 @@ unsigned int string_hash(void *string)
 
 int json_filter_from_json(JSON_Value **dst_json, JSON_Value *ori_json, char *query, int idx)
 {
+	/* idx base is 1 */
 	JSON_Value *dst_val, *ori_val;
 	JSON_Array *dst_array, *ori_array;
 	JSON_Value *tmp_val, *dup_val;
@@ -165,6 +168,7 @@ int json_filter_from_json(JSON_Value **dst_json, JSON_Value *ori_json, char *que
 
 int json_patch_to_json(JSON_Value **dst_json, JSON_Value *ori_json, char *query, char *set_val, int idx)
 {
+	/* idx base is 1 */
 	JSON_Value *dst_val,*usr_data, *rsp_val;
 	JSON_Array *dst_array, *ori_array;
 	JSON_Value *tmp_val, *dup_val;
@@ -221,7 +225,7 @@ int json_patch_to_json(JSON_Value **dst_json, JSON_Value *ori_json, char *query,
 		}		
 	
 	}		
-	json_serialize_to_file_pretty(ori_json, "s2e_opm.json");
+	json_serialize_to_file_pretty(ori_json, MODULE_CFG);
 	printf("Joy %s-%d\r\n", __func__, __LINE__);
 	rsp_val = json_object_get_wrapping_value(obj);
 
@@ -232,19 +236,25 @@ int json_patch_to_json(JSON_Value **dst_json, JSON_Value *ori_json, char *query,
 
 int json_put_to_json(JSON_Value **dst_json, JSON_Value *ori_json, char *query, char *set_val, int idx)
 {
-	JSON_Value *dst_val,*usr_data, *rsp_val;
-	JSON_Array *dst_array, *ori_array;
+	/* idx base is 1 */
+	JSON_Value *dst_val,*usr_data, *rsp_val, *def_val;
+	JSON_Array *dst_array, *ori_array, *def_array;
 	JSON_Value *tmp_val, *dup_val;
-	JSON_Object *obj;
+	JSON_Object *obj, *def_obj;
 	int i, j, cnt, type, filter_cnt, append = 1;
 	int array_cnt, obj_cnt;
 	struct yuarel_param params[5];	
 	char *serialized_string = NULL, *usr_obj_name;
 
+	/* Get default json file, 
+        	the rest of object that we don't request to set need to be set as default */
+	def_val = json_parse_file(DEFAULT_CFG);
+	def_array = json_value_get_array(def_val);
+	
 	filter_cnt = yuarel_parse_query(query, '&', params, 5); 
 	ori_array = json_value_get_array(ori_json);
 	array_cnt = json_array_get_count(ori_array);
-	
+	printf("array_cnt = %d\r\n", array_cnt);
 	usr_data = json_parse_string(set_val);
 	if (usr_data == NULL) {
 		printf("Error %s-%d\r\n", __func__, __LINE__);
@@ -260,7 +270,12 @@ int json_put_to_json(JSON_Value **dst_json, JSON_Value *ori_json, char *query, c
 	}	
 
 	i = (idx - 1);
-	obj = json_array_get_object(ori_array, i);
+	//obj = json_array_get_object(ori_array, i);
+	dup_val = json_array_get_value(ori_array, i);
+	tmp_val = json_array_get_value(def_array, i);
+	dup_val = json_value_deep_copy(tmp_val);
+	obj = json_value_get_object(dup_val);
+
 	for (j = 0; j < obj_cnt; j++) {
 		usr_obj_name = json_object_get_name(json_object(usr_data), j);
 		type = json_object_member_get_type(obj, usr_obj_name);
@@ -288,7 +303,7 @@ int json_put_to_json(JSON_Value **dst_json, JSON_Value *ori_json, char *query, c
 		}		
 	
 	}		
-	json_serialize_to_file_pretty(ori_json, "s2e_opm.json");
+	json_serialize_to_file_pretty(ori_json, MODULE_CFG);
 	printf("Joy %s-%d\r\n", __func__, __LINE__);
 	rsp_val = json_object_get_wrapping_value(obj);
 
@@ -387,7 +402,7 @@ static REST_HTTP_STATUS s2e_rest_get(const char *uri, char *input_data, int32_t 
 	printf("\tfragment:\t%s\n", yurl.fragment);
 #endif	
 	if ((number == 2) && (string_hash(yurl.path) == string_hash("s2e_opm/config"))) {
-		user_data = json_parse_file("s2e_opm.json");
+		user_data = json_parse_file(MODULE_CFG);
 		ret = json_filter_from_json(&dst_json, user_data, yurl.query, 0);
 		if (ret == REST_HTTP_STATUS_OK) {
 			serialized_string = json_serialize_to_string(dst_json);
@@ -405,7 +420,7 @@ static REST_HTTP_STATUS s2e_rest_get(const char *uri, char *input_data, int32_t 
 		sprintf(cmp_uri, "s2e_opm/config/%d", idx);
 		if (idx > 0 && idx < (MAX_UART_PORT + 1)) { /* filter the idx range */
 			if (string_hash(yurl.path) == string_hash(cmp_uri)) {
-				user_data = json_parse_file("s2e_opm.json");
+				user_data = json_parse_file(MODULE_CFG);
 				ret = json_filter_from_json(&dst_json, user_data, yurl.query, idx);
 				if (ret == REST_HTTP_STATUS_OK) {
 					serialized_string = json_serialize_to_string(dst_json);
@@ -465,7 +480,7 @@ static REST_HTTP_STATUS s2e_rest_patch(const char *uri, char *input_data, int32_
 		sprintf(cmp_uri, "s2e_opm/config/%d", idx);
 		if (idx > 0 && idx < (MAX_UART_PORT + 1)) { /* filter the idx range */
 			if (string_hash(yurl.path) == string_hash(cmp_uri)) {
-				ori_val = json_parse_file("s2e_opm.json");		
+				ori_val = json_parse_file(MODULE_CFG);		
 				ret = json_patch_to_json(&dst_json, ori_val, yurl.query, input_data, idx);
 				if (ret == REST_HTTP_STATUS_OK) {
 					serialized_string = json_serialize_to_string(dst_json);
@@ -520,7 +535,7 @@ static REST_HTTP_STATUS s2e_rest_put(const char *uri, char *input_data, int32_t 
 		sprintf(cmp_uri, "s2e_opm/config/%d", idx);
 		if (idx > 0 && idx < (MAX_UART_PORT + 1)) { /* filter the idx range */
 			if (string_hash(yurl.path) == string_hash(cmp_uri)) {
-				ori_val = json_parse_file("s2e_opm.json");		
+				ori_val = json_parse_file(MODULE_CFG);		
 				ret = json_put_to_json(&dst_json, ori_val, yurl.query, input_data, idx);
 				if (ret == REST_HTTP_STATUS_OK) {
 					serialized_string = json_serialize_to_string(dst_json);
