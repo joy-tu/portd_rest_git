@@ -226,7 +226,6 @@ int json_patch_to_json(JSON_Value **dst_json, JSON_Value *ori_json, char *query,
 	
 	}		
 	json_serialize_to_file_pretty(ori_json, MODULE_CFG);
-	printf("Joy %s-%d\r\n", __func__, __LINE__);
 	rsp_val = json_object_get_wrapping_value(obj);
 
 	*dst_json = rsp_val;
@@ -237,14 +236,17 @@ int json_patch_to_json(JSON_Value **dst_json, JSON_Value *ori_json, char *query,
 int json_put_to_json(JSON_Value **dst_json, JSON_Value *ori_json, char *query, char *set_val, int idx)
 {
 	/* idx base is 1 */
-	JSON_Value *dst_val,*usr_data, *rsp_val, *def_val;
-	JSON_Array *dst_array, *ori_array, *def_array;
+	JSON_Value *dst_val,*usr_data, *rsp_val, *def_val, *new_val;
+	JSON_Array *dst_array, *ori_array, *def_array, *new_array;
 	JSON_Value *tmp_val, *dup_val;
 	JSON_Object *obj, *def_obj;
 	int i, j, cnt, type, filter_cnt, append = 1;
 	int array_cnt, obj_cnt;
 	struct yuarel_param params[5];	
 	char *serialized_string = NULL, *usr_obj_name;
+
+	new_val = json_value_init_array();
+	new_array = json_value_get_array(new_val);
 
 	/* Get default json file, 
         	the rest of object that we don't request to set need to be set as default */
@@ -254,13 +256,13 @@ int json_put_to_json(JSON_Value **dst_json, JSON_Value *ori_json, char *query, c
 	filter_cnt = yuarel_parse_query(query, '&', params, 5); 
 	ori_array = json_value_get_array(ori_json);
 	array_cnt = json_array_get_count(ori_array);
-	printf("array_cnt = %d\r\n", array_cnt);
+
 	usr_data = json_parse_string(set_val);
 	if (usr_data == NULL) {
 		printf("Error %s-%d\r\n", __func__, __LINE__);
 		return REST_HTTP_STATUS_BAD_REQUEST;
 	}
-	
+
 	type = json_value_get_type(usr_data);
 	if (type == JSONObject) {
 		obj_cnt = json_object_get_count(json_object(usr_data));
@@ -270,12 +272,25 @@ int json_put_to_json(JSON_Value **dst_json, JSON_Value *ori_json, char *query, c
 	}	
 
 	i = (idx - 1);
-	//obj = json_array_get_object(ori_array, i);
-	dup_val = json_array_get_value(ori_array, i);
-	tmp_val = json_array_get_value(def_array, i);
-	dup_val = json_value_deep_copy(tmp_val);
-	obj = json_value_get_object(dup_val);
 
+#if 0
+	obj = json_array_get_object(ori_array, i);
+#else
+	for (j = 0; j < array_cnt; j++) {
+		if (i != j){ /* Not equal, use current cfg */
+			obj = json_array_get_object(ori_array, j);
+			tmp_val = json_object_get_wrapping_value(obj);
+			dup_val = json_value_deep_copy(tmp_val);
+
+		} else { /* Equal, use default cfg */
+			obj = json_array_get_object(def_array, j);
+			tmp_val = json_object_get_wrapping_value(obj);
+			dup_val = json_value_deep_copy(tmp_val);
+		}
+		json_array_append_value(new_array, dup_val);
+	}
+	obj = json_array_get_object(new_array, i);
+#endif
 	for (j = 0; j < obj_cnt; j++) {
 		usr_obj_name = json_object_get_name(json_object(usr_data), j);
 		type = json_object_member_get_type(obj, usr_obj_name);
@@ -303,8 +318,8 @@ int json_put_to_json(JSON_Value **dst_json, JSON_Value *ori_json, char *query, c
 		}		
 	
 	}		
-	json_serialize_to_file_pretty(ori_json, MODULE_CFG);
-	printf("Joy %s-%d\r\n", __func__, __LINE__);
+	json_serialize_to_file_pretty(new_val, MODULE_CFG);
+
 	rsp_val = json_object_get_wrapping_value(obj);
 
 	*dst_json = rsp_val;
@@ -482,7 +497,7 @@ static REST_HTTP_STATUS s2e_rest_patch(const char *uri, char *input_data, int32_
 			if (string_hash(yurl.path) == string_hash(cmp_uri)) {
 				ori_val = json_parse_file(MODULE_CFG);		
 				ret = json_patch_to_json(&dst_json, ori_val, yurl.query, input_data, idx);
-				if (ret == REST_HTTP_STATUS_OK) {
+				if (ret == REST_HTTP_STATUS_OK) {		
 					serialized_string = json_serialize_to_string(dst_json);
 					rest_write(serialized_string, strlen(serialized_string));			
 					json_free_serialized_string(serialized_string);
