@@ -401,6 +401,7 @@ static REST_HTTP_STATUS s2e_rest_get(const char *uri, char *input_data, int32_t 
 	sprintf(rest_addr, "%s%s", fakeurl, uri);
 	printf("%s\r\n", rest_addr);
 
+	printf("s2e_rest_get-uri=%s, input_data=%s, size=%d\r\n", uri, input_data, input_data_size);
 	if (-1 == yuarel_parse(&yurl, rest_addr)) {
 		printf("Could not parse url!\n");
 		return 1;
